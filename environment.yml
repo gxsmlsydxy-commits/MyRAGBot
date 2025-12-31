@@ -1,0 +1,16 @@
+name: rag_env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pip
+  - pip:
+    - streamlit
+    - openai
+    - PyPDF2
+    - langchain
+    - langchain-community
+    - langchain-huggingface
+    - faiss-cpu
+    - sentence-transformers
+    - huggingface-hub
