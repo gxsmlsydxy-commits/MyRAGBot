@@ -142,6 +142,14 @@ if user_question:
                 # 显示 AI 回答
                 st.write(ai_answer)
             
+            # 显示来源片段（在 AI 回答下方）
+            with st.expander("🔍 查看 AI 参考的文档片段 (Source Context)"):
+                for i, chunk in enumerate(relevant_chunks, 1):
+                    st.markdown(f"**片段 {i}:**")
+                    st.info(chunk.page_content)
+                    if i < len(relevant_chunks):
+                        st.markdown("---")
+            
             # 保存 AI 回答到历史记录
             st.session_state.messages.append({"role": "assistant", "content": ai_answer})
             
