@@ -118,6 +118,10 @@ if "vectorstore" in st.session_state and api_key:
 2. 为每个事件评估风险等级（高/中/低）
 3. 提取核心应对措施（不超过20字）
 4. 记录事件所在的页码（如果文档中有页码信息）
+5. **重要**：为每个事件评估置信度分数（1-10分），并引用原文依据
+   - 如果能在文档中找到确切的原文依据，置信度应 >= 5
+   - 如果找不到确切原文或信息不明确，置信度必须 < 5
+   - evidence_quote 必须是从文档中直接引用的原话，不能是总结或改写
 
 输出格式要求：
 - 必须输出纯 JSON 格式，不要包含任何 Markdown 代码块标记（如 ```json）
@@ -130,7 +134,9 @@ if "vectorstore" in st.session_state and api_key:
       "event_name": "事件名称",
       "risk_level": "高/中/低",
       "key_action": "核心应对措施(不超过20字)",
-      "page_ref": 页码数字或null
+      "page_ref": 页码数字或null,
+      "confidence_score": 1-10的整数,
+      "evidence_quote": "从文档中直接引用的原文依据"
     }
   ]
 }
@@ -188,21 +194,92 @@ if "vectorstore" in st.session_state and api_key:
                 
                 # 转换为 DataFrame 格式
                 events_list = json_data["events"]
-                
-                # 使用 st.dataframe 显示表格
                 df = pd.DataFrame(events_list)
                 
+                # 确保 confidence_score 存在，如果不存在则设为默认值
+                if "confidence_score" not in df.columns:
+                    df["confidence_score"] = 5  # 默认值
+                
+                # 确保 evidence_quote 存在
+                if "evidence_quote" not in df.columns:
+                    df["evidence_quote"] = "未提供"
+                
+                # 处理 confidence_score 为数值类型
+                df["confidence_score"] = pd.to_numeric(df["confidence_score"], errors="coerce").fillna(5)
+                
                 # 重新排列列的顺序，使其更易读
+                column_order = ["event_name", "risk_level", "key_action", "confidence_score", "evidence_quote"]
                 if "page_ref" in df.columns:
-                    df = df[["event_name", "risk_level", "key_action", "page_ref"]]
-                else:
-                    df = df[["event_name", "risk_level", "key_action"]]
+                    column_order.insert(3, "page_ref")
+                
+                # 只保留存在的列
+                available_columns = [col for col in column_order if col in df.columns]
+                df = df[available_columns]
                 
                 # 重命名列名为中文
-                df.columns = ["事件名称", "风险等级", "核心应对措施", "页码"] if "page_ref" in df.columns else ["事件名称", "风险等级", "核心应对措施"]
+                column_mapping = {
+                    "event_name": "事件名称",
+                    "risk_level": "风险等级",
+                    "key_action": "核心应对措施",
+                    "page_ref": "页码",
+                    "confidence_score": "置信度",
+                    "evidence_quote": "原文依据"
+                }
+                df = df.rename(columns=column_mapping)
+                
+                # 配置列显示格式
+                column_config = {}
+                
+                # 配置置信度列为进度条
+                if "置信度" in df.columns:
+                    column_config["置信度"] = st.column_config.ProgressColumn(
+                        "置信度",
+                        help="模型对提取准确性的信心评分（1-10分）",
+                        min_value=1,
+                        max_value=10,
+                        format="%d 分"
+                    )
+                
+                # 配置原文依据列，使其可以展开查看
+                if "原文依据" in df.columns:
+                    column_config["原文依据"] = st.column_config.TextColumn(
+                        "原文依据",
+                        help="从文档中直接引用的原文",
+                        width="large"
+                    )
+                
+                # 在事件名称列中添加警告图标（如果置信度低）
+                if "置信度" in df.columns and "事件名称" in df.columns:
+                    # 为低置信度的事件添加警告图标
+                    def add_warning_icon(row):
+                        if pd.notna(row["置信度"]) and row["置信度"] < 7:
+                            return f"⚠️ {row['事件名称']}"
+                        return row["事件名称"]
+                    
+                    df["事件名称"] = df.apply(add_warning_icon, axis=1)
                 
                 # 显示表格
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    df,
+                    column_config=column_config,
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # 显示低置信度警告
+                if "置信度" in df.columns:
+                    low_confidence_df = df[df["置信度"] < 7]
+                    low_confidence_count = len(low_confidence_df)
+                    if low_confidence_count > 0:
+                        st.warning(f"⚠️ 有 {low_confidence_count} 个事件的置信度低于 7 分，已用 ⚠️ 标记，请谨慎参考。")
+                        # 显示低置信度事件的详细信息
+                        with st.expander(f"🔍 查看低置信度事件详情 ({low_confidence_count} 个)"):
+                            for idx, row in low_confidence_df.iterrows():
+                                st.markdown(f"**{row.get('事件名称', '未知事件').replace('⚠️ ', '')}**")
+                                st.caption(f"置信度: {row['置信度']:.0f}/10")
+                                if "原文依据" in row and pd.notna(row["原文依据"]):
+                                    st.info(f"原文依据: {row['原文依据']}")
+                                st.divider()
                 
                 # 显示原始 JSON（可选，用于调试）
                 with st.expander("📋 查看原始 JSON 数据"):
